@@ -1,10 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { useSelector } from 'react-redux';
 import MainFeature from '../components/MainFeature';
 import { getIcon } from '../utils/iconUtils';
+import { invoiceService } from '../services/invoiceService';
 
 function Home({ toast }) {
   const [activeTab, setActiveTab] = useState('invoice');
+  const [isLoading, setIsLoading] = useState(true);
+  const [dashboardStats, setDashboardStats] = useState({
+    totalInvoices: 0,
+    pendingPayments: 0,
+    totalRevenue: 0,
+    activeClients: 0
+  });
+  
+  const { user } = useSelector(state => state.user);
   
   const tabs = [
     { id: 'invoice', label: 'Invoices', icon: 'FileText' },
@@ -13,12 +24,46 @@ function Home({ toast }) {
     { id: 'report', label: 'Reports', icon: 'BarChart' }
   ];
   
-  // Define dashboard statistics
+  // Fetch dashboard data
+  useEffect(() => {
+    async function fetchDashboardData() {
+      try {
+        setIsLoading(true);
+        // Get all invoices
+        const invoices = await invoiceService.getInvoices();
+        
+        // Calculate dashboard stats
+        const totalInvoices = invoices.length;
+        const pendingInvoices = invoices.filter(inv => inv.status === 'sent' || inv.status === 'draft').length;
+        const totalRevenue = invoices
+          .filter(inv => inv.status === 'paid')
+          .reduce((sum, inv) => sum + (parseFloat(inv.total) || 0), 0);
+          
+        // Count unique clients
+        const uniqueClients = [...new Set(invoices.map(inv => inv.clientEmail))].length;
+        
+        setDashboardStats({
+          totalInvoices,
+          pendingPayments: pendingInvoices,
+          totalRevenue,
+          activeClients: uniqueClients
+        });
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    
+    fetchDashboardData();
+  }, []);
+  
+  // Build stats array from fetched data
   const stats = [
-    { title: 'Total Invoices', value: '24', icon: 'FileText', color: 'bg-blue-100 dark:bg-blue-900/30', textColor: 'text-blue-700 dark:text-blue-400' },
-    { title: 'Pending Payments', value: '8', icon: 'Clock', color: 'bg-amber-100 dark:bg-amber-900/30', textColor: 'text-amber-700 dark:text-amber-400' },
-    { title: 'Total Revenue', value: '₹29,450', icon: 'DollarSign', color: 'bg-green-100 dark:bg-green-900/30', textColor: 'text-green-700 dark:text-green-400' },
-    { title: 'Active Clients', value: '12', icon: 'Users', color: 'bg-purple-100 dark:bg-purple-900/30', textColor: 'text-purple-700 dark:text-purple-400' }
+    { title: 'Total Invoices', value: dashboardStats.totalInvoices.toString(), icon: 'FileText', color: 'bg-blue-100 dark:bg-blue-900/30', textColor: 'text-blue-700 dark:text-blue-400' },
+    { title: 'Pending Payments', value: dashboardStats.pendingPayments.toString(), icon: 'Clock', color: 'bg-amber-100 dark:bg-amber-900/30', textColor: 'text-amber-700 dark:text-amber-400' },
+    { title: 'Total Revenue', value: `₹${dashboardStats.totalRevenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, icon: 'DollarSign', color: 'bg-green-100 dark:bg-green-900/30', textColor: 'text-green-700 dark:text-green-400' },
+    { title: 'Active Clients', value: dashboardStats.activeClients.toString(), icon: 'Users', color: 'bg-purple-100 dark:bg-purple-900/30', textColor: 'text-purple-700 dark:text-purple-400' }
   ];
 
   return (
@@ -28,7 +73,7 @@ function Home({ toast }) {
         <div>
           <h1 className="text-2xl md:text-3xl font-bold">Dashboard</h1>
           <p className="text-surface-500 dark:text-surface-400 mt-1">
-            Welcome to PrathaBill, your complete billing solution
+            Welcome {user?.firstName || ''} to PrathaBill, your complete billing solution
           </p>
         </div>
         
@@ -49,6 +94,11 @@ function Home({ toast }) {
 
       {/* Stats Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {isLoading ? (
+          Array(4).fill(0).map((_, index) => (
+            <div key={index} className="card p-5 animate-pulse h-24"></div>
+          ))
+        ) : (
         {stats.map((stat, index) => {
           const StatIcon = getIcon(stat.icon);
           
@@ -72,6 +122,7 @@ function Home({ toast }) {
             </motion.div>
           );
         })}
+        )}
       </div>
 
       {/* Tab Navigation */}

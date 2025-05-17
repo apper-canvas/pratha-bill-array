@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getIcon } from '../utils/iconUtils';
+import { invoiceService } from '../services/invoiceService';
+import { invoiceItemService } from '../services/invoiceItemService';
 
 function MainFeature({ toast }) {
   // Icons
+  const LoadingSpinner = getIcon('Loader');
+  const AlertIcon = getIcon('AlertCircle');
   const FileEditIcon = getIcon('FileEdit');
   const PlusIcon = getIcon('Plus');
   const TrashIcon = getIcon('Trash');
@@ -31,10 +35,44 @@ function MainFeature({ toast }) {
   // List of saved invoices
   const [invoices, setInvoices] = useState([]);
   
-  // UI state
+  // UI states
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [currentInvoiceId, setCurrentInvoiceId] = useState(null);
   const [errors, setErrors] = useState({});
+  const [apiError, setApiError] = useState('');
+  
+  // Fetch all invoices on component mount
+  useEffect(() => {
+    async function fetchInvoices() {
+      try {
+        setIsLoading(true);
+        setApiError('');
+        const data = await invoiceService.getInvoices();
+        setInvoices(data);
+      } catch (error) {
+        console.error("Error fetching invoices:", error);
+        setApiError('Failed to load invoices. Please try again later.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    
+    if (viewMode === 'list') {
+      fetchInvoices();
+    }
+  }, [viewMode]);
+  
+  // Generate invoice number when creating a new invoice
+  const generateInvoiceNumber = () => {
+    const date = new Date();
+    const year = date.getFullYear().toString().slice(-2);
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const invoiceCount = (invoices.length + 1).toString().padStart(3, '0');
+    return `INV-${year}${month}-${invoiceCount}`;
+  };
   const [viewMode, setViewMode] = useState('list'); // 'list', 'create', 'detail'
   const [selectedInvoice, setSelectedInvoice] = useState(null);
 
@@ -65,17 +103,8 @@ function MainFeature({ toast }) {
 
   // Generate unique invoice number
   useEffect(() => {
-    if (viewMode === 'create' && !isEditing) {
-      const date = new Date();
-      const year = date.getFullYear().toString().slice(-2);
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      const invoiceCount = (invoices.length + 1).toString().padStart(3, '0');
-      setInvoice({
-        ...invoice,
-        invoiceNumber: `INV-${year}${month}-${invoiceCount}`,
-        issueDate: new Date().toISOString().split('T')[0],
-        dueDate: new Date(date.setDate(date.getDate() + 30)).toISOString().split('T')[0]
-      });
+    if (viewMode === 'create' && !isEditing && !invoice.invoiceNumber) {
+      setInvoice(prev => ({ ...prev, invoiceNumber: generateInvoiceNumber() }));
     }
   }, [viewMode]);
 
@@ -88,6 +117,33 @@ function MainFeature({ toast }) {
     if (errors[name]) {
       setErrors({ ...errors, [name]: null });
     }
+  };
+  
+  // Initialize new invoice with defaults
+  const initializeNewInvoice = () => {
+    const today = new Date();
+    const dueDate = new Date();
+    dueDate.setDate(today.getDate() + 30);
+    
+    setInvoice({
+      invoiceNumber: generateInvoiceNumber(),
+      issueDate: today.toISOString().split('T')[0],
+      dueDate: dueDate.toISOString().split('T')[0],
+      clientName: '',
+      clientEmail: '',
+      clientAddress: '',
+      items: [{ description: '', quantity: 1, rate: 0, amount: 0 }],
+      notes: '',
+      subtotal: 0,
+      taxRate: 18,
+      taxAmount: 0,
+      total: 0
+    });
+    
+    setCurrentInvoiceId(null);
+    setIsEditing(false);
+    setErrors({});
+    setApiError('');
   };
 
   // Handle item changes
@@ -144,54 +200,275 @@ function MainFeature({ toast }) {
   };
 
   // Save invoice
-  const saveInvoice = () => {
+  const saveInvoice = async () => {
     if (!validateForm()) {
       toast.error("Please fill in all required fields");
       return;
     }
-    
-    if (isEditing) {
-      // Update existing invoice
+
+    try {
+      setIsSaving(true);
+      setApiError('');
+      
+      let savedInvoice;
+      
+      if (isEditing) {
+        // Update existing invoice
+        savedInvoice = await invoiceService.updateInvoice(currentInvoiceId, {
+          ...invoice,
+          status: invoice.status || 'draft'
+        });
+        
+        // Delete all existing items and create new ones
+        await invoiceItemService.deleteInvoiceItems(currentInvoiceId);
+        await invoiceItemService.createInvoiceItems(currentInvoiceId, invoice.items);
+        
+        // Update local state
+        const updatedInvoices = invoices.map(inv => 
+          inv.Id === currentInvoiceId ? savedInvoice : inv
+        );
+        setInvoices(updatedInvoices);
+        toast.success("Invoice updated successfully!");
+      } else {
+        // Create new invoice
+        savedInvoice = await invoiceService.createInvoice({
+          ...invoice,
+          status: 'draft'
+        });
+        
+        // Create invoice items
+        await invoiceItemService.createInvoiceItems(savedInvoice.Id, invoice.items);
+        
+        // Update local state
+        setInvoices([...invoices, savedInvoice]);
+        toast.success("Invoice created successfully!");
+      }
+      
+      resetForm();
+      setViewMode('list');
+    } catch (error) {
+      console.error("Error saving invoice:", error);
+      setApiError("Failed to save invoice. Please try again.");
+      toast.error("Failed to save invoice");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Fetch invoice details including items
+  const fetchInvoiceDetails = async (invoiceId) => {
+    try {
+      setIsLoading(true);
+      setApiError('');
+      
+      // Get invoice data
+      const invoiceData = await invoiceService.getInvoiceById(invoiceId);
+      if (!invoiceData) {
+        throw new Error("Invoice not found");
+      }
+      
+      // Get invoice items
+      const itemsData = await invoiceItemService.getInvoiceItems(invoiceId);
+      
+      // Format data for the UI
+      const formattedItems = itemsData.map(item => ({
+        id: item.Id,
+        description: item.description,
+        quantity: item.quantity,
+        rate: item.rate,
+        amount: item.amount
+      }));
+      
+      // If no items found, provide default empty item
+      const items = formattedItems.length > 0 
+        ? formattedItems 
+        : [{ description: '', quantity: 1, rate: 0, amount: 0 }];
+      
+      // Set invoice with items
+      const fullInvoice = {
+        Id: invoiceData.Id,
+        invoiceNumber: invoiceData.invoiceNumber,
+        issueDate: invoiceData.issueDate,
+        dueDate: invoiceData.dueDate,
+        clientName: invoiceData.clientName,
+        clientEmail: invoiceData.clientEmail,
+        clientAddress: invoiceData.clientAddress,
+        notes: invoiceData.notes,
+        subtotal: invoiceData.subtotal,
+        taxRate: invoiceData.taxRate,
+        taxAmount: invoiceData.taxAmount,
+        total: invoiceData.total,
+        status: invoiceData.status,
+        items: items
+      };
+      
+      return fullInvoice;
+    } catch (error) {
+      console.error(`Error fetching invoice details for ID ${invoiceId}:`, error);
+      toast.error("Failed to load invoice details");
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Delete invoice
+  const deleteInvoice = async (invoiceId) => {
+    try {
+      setIsDeleting(true);
+      setApiError('');
+      
+      // Delete invoice items first
+      await invoiceItemService.deleteInvoiceItems(invoiceId);
+      
+      // Then delete the invoice
+      await invoiceService.deleteInvoice(invoiceId);
+      
+      // Update local state
+      const updatedInvoices = invoices.filter(inv => inv.Id !== invoiceId);
+      setInvoices(updatedInvoices);
+      
+      toast.success("Invoice deleted successfully!");
+      
+      // If we're in detail view, go back to list
+      if (viewMode === 'detail') {
+        setViewMode('list');
+      }
+    } catch (error) {
+      console.error(`Error deleting invoice with ID ${invoiceId}:`, error);
+      setApiError("Failed to delete invoice. Please try again.");
+      toast.error("Failed to delete invoice");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Edit invoice
+  const editInvoice = async (invoice) => {
+    try {
+      setIsLoading(true);
+      setApiError('');
+      
+      const fullInvoice = await fetchInvoiceDetails(invoice.Id);
+      
+      setInvoice(fullInvoice);
+      setCurrentInvoiceId(invoice.Id);
+      setIsEditing(true);
+      setViewMode('create');
+    } catch (error) {
+      console.error("Error loading invoice for editing:", error);
+      toast.error("Failed to load invoice for editing");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // View invoice details
+  const viewInvoice = async (invoice) => {
+    try {
+      setIsLoading(true);
+      setApiError('');
+      
+      const fullInvoice = await fetchInvoiceDetails(invoice.Id);
+      
+      setSelectedInvoice(fullInvoice);
+      setViewMode('detail');
+    } catch (error) {
+      console.error("Error loading invoice details:", error);
+      toast.error("Failed to load invoice details");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Mark invoice as sent
+  const markAsSent = async (id) => {
+    try {
+      const invoice = invoices.find(inv => inv.Id === id);
+      if (!invoice) return;
+      
+      const updatedInvoice = await invoiceService.updateInvoice(id, {
+        ...invoice,
+        status: 'sent'
+      });
+      
+      // Update local state
       const updatedInvoices = invoices.map(inv => 
-        inv.id === currentInvoiceId ? { ...invoice, id: currentInvoiceId } : inv
+        inv.Id === id ? updatedInvoice : inv
       );
       setInvoices(updatedInvoices);
-      toast.success("Invoice updated successfully!");
-    } else {
-      // Create new invoice
-      const newInvoice = {
-        ...invoice,
-        id: Date.now().toString(),
-        status: 'draft',
-        createdAt: new Date().toISOString()
-      };
-      setInvoices([...invoices, newInvoice]);
-      toast.success("Invoice created successfully!");
+      
+      // If this is the currently selected invoice, update it
+      if (selectedInvoice && selectedInvoice.Id === id) {
+        setSelectedInvoice({...selectedInvoice, status: 'sent'});
+      }
+      
+      toast.success("Invoice marked as sent!");
+    } catch (error) {
+      console.error(`Error updating invoice status for ID ${id}:`, error);
+      toast.error("Failed to update invoice status");
     }
+  };
+
+  // Mark invoice as paid
+  const markAsPaid = async (id) => {
+    try {
+      const invoice = invoices.find(inv => inv.Id === id);
+      if (!invoice) return;
+      
+      const updatedInvoice = await invoiceService.updateInvoice(id, {
+        ...invoice,
+        status: 'paid'
+      });
+      
+      // Update local state
+      const updatedInvoices = invoices.map(inv => 
+        inv.Id === id ? updatedInvoice : inv
+      );
+      setInvoices(updatedInvoices);
+      
+      // If this is the currently selected invoice, update it
+      if (selectedInvoice && selectedInvoice.Id === id) {
+        setSelectedInvoice({...selectedInvoice, status: 'paid'});
+      }
+      
+      toast.success("Invoice marked as paid!");
+    } catch (error) {
+      console.error(`Error updating invoice status for ID ${id}:`, error);
+      toast.error("Failed to update invoice status");
+    }
+  };
+
+  // Mark invoice as overdue
+  const markAsOverdue = async (id) => {
+    try {
+      const invoice = invoices.find(inv => inv.Id === id);
+      if (!invoice) return;
+      
+      const updatedInvoice = await invoiceService.updateInvoice(id, {
+        ...invoice,
+        status: 'overdue'
+      });
+      
+      // Update local state
+      const updatedInvoices = invoices.map(inv => 
+        inv.Id === id ? updatedInvoice : inv
+      );
+      setInvoices(updatedInvoices);
+      
+      // If this is the currently selected invoice, update it
+      if (selectedInvoice && selectedInvoice.Id === id) {
+        setSelectedInvoice({...selectedInvoice, status: 'overdue'});
+      }
+      
+      toast.success("Invoice marked as overdue!");
+    } catch (error) {
+      console.error(`Error updating invoice status for ID ${id}:`, error);
+      toast.error("Failed to update invoice status");
     
     resetForm();
     setViewMode('list');
   };
-
-  // Delete invoice
-  const deleteInvoice = (id) => {
-    const updatedInvoices = invoices.filter(inv => inv.id !== id);
-    setInvoices(updatedInvoices);
-    toast.success("Invoice deleted successfully!");
-  };
-
-  // Edit invoice
-  const editInvoice = (invoice) => {
-    setInvoice(invoice);
-    setCurrentInvoiceId(invoice.id);
-    setIsEditing(true);
-    setViewMode('create');
-  };
-
-  // View invoice details
-  const viewInvoice = (invoice) => {
-    setSelectedInvoice(invoice);
-    setViewMode('detail');
   };
 
   // Reset form
@@ -213,6 +490,7 @@ function MainFeature({ toast }) {
     setCurrentInvoiceId(null);
     setIsEditing(false);
     setErrors({});
+    setApiError('');
   };
 
   // Format currency
@@ -230,6 +508,8 @@ function MainFeature({ toast }) {
         return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
       case 'sent':
         return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'draft':
+        return 'bg-surface-100 text-surface-800 dark:bg-surface-700 dark:text-surface-300';
       case 'overdue':
         return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
       default:
@@ -248,24 +528,6 @@ function MainFeature({ toast }) {
     });
   };
 
-  // Mark invoice as sent
-  const markAsSent = (id) => {
-    const updatedInvoices = invoices.map(inv => 
-      inv.id === id ? { ...inv, status: 'sent' } : inv
-    );
-    setInvoices(updatedInvoices);
-    toast.success("Invoice marked as sent!");
-  };
-
-  // Mark invoice as paid
-  const markAsPaid = (id) => {
-    const updatedInvoices = invoices.map(inv => 
-      inv.id === id ? { ...inv, status: 'paid' } : inv
-    );
-    setInvoices(updatedInvoices);
-    toast.success("Invoice marked as paid!");
-  };
-
   return (
     <div className="space-y-6">
       {/* View Mode Navigation */}
@@ -276,8 +538,9 @@ function MainFeature({ toast }) {
           {viewMode === 'detail' && 'Invoice Details'}
         </h2>
         
-        {viewMode === 'list' && (
-          <button
+              initializeNewInvoice();
+              setViewMode('create'); 
+              setIsEditing(false);
             onClick={() => {
               resetForm();
               setViewMode('create');
@@ -311,6 +574,18 @@ function MainFeature({ toast }) {
             exit={{ opacity: 0, y: 10 }}
             className="card overflow-hidden"
           >
+            {isLoading && (
+              <div className="flex justify-center items-center p-8">
+                <LoadingSpinner className="animate-spin h-8 w-8 text-primary" />
+              </div>
+            )}
+            
+            {apiError && (
+              <div className="p-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2">
+                <AlertIcon className="h-5 w-5" />
+                <p>{apiError}</p>
+              </div>
+            )}
             {invoices.length === 0 ? (
               <div className="p-8 text-center">
                 <div className="bg-surface-100 dark:bg-surface-800 p-4 rounded-full inline-block mb-4">
@@ -353,11 +628,11 @@ function MainFeature({ toast }) {
                         className="hover:bg-surface-50 dark:hover:bg-surface-800/60 cursor-pointer"
                         onClick={() => viewInvoice(inv)}
                       >
-                        <td className="p-4">{inv.invoiceNumber}</td>
-                        <td className="p-4">{inv.clientName}</td>
-                        <td className="p-4">{formatDate(inv.issueDate)}</td>
-                        <td className="p-4">{formatDate(inv.dueDate)}</td>
-                        <td className="p-4 font-medium">{formatCurrency(inv.total)}</td>
+                        <td className="p-4">{inv.invoiceNumber || 'N/A'}</td>
+                        <td className="p-4">{inv.clientName || 'N/A'}</td>
+                        <td className="p-4">{formatDate(inv.issueDate) || 'N/A'}</td>
+                        <td className="p-4">{formatDate(inv.dueDate) || 'N/A'}</td>
+                        <td className="p-4 font-medium">{formatCurrency(inv.total || 0)}</td>
                         <td className="p-4">
                           <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(inv.status)}`}>
                             {inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}
@@ -367,7 +642,7 @@ function MainFeature({ toast }) {
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             {inv.status === 'draft' && (
                               <button
-                                onClick={() => markAsSent(inv.id)}
+                                onClick={() => markAsSent(inv.Id)}
                                 className="p-1 text-blue-600 hover:bg-blue-50 rounded dark:text-blue-400 dark:hover:bg-blue-900/20"
                                 title="Mark as Sent"
                               >
@@ -376,7 +651,7 @@ function MainFeature({ toast }) {
                             )}
                             {inv.status === 'sent' && (
                               <button
-                                onClick={() => markAsPaid(inv.id)}
+                                onClick={() => markAsPaid(inv.Id)}
                                 className="p-1 text-green-600 hover:bg-green-50 rounded dark:text-green-400 dark:hover:bg-green-900/20"
                                 title="Mark as Paid"
                               >
@@ -393,7 +668,7 @@ function MainFeature({ toast }) {
                             <button
                               onClick={() => {
                                 if (confirm("Are you sure you want to delete this invoice?")) {
-                                  deleteInvoice(inv.id);
+                                  deleteInvoice(inv.Id);
                                 }
                               }}
                               className="p-1 text-red-600 hover:bg-red-50 rounded dark:text-red-400 dark:hover:bg-red-900/20"
@@ -422,7 +697,22 @@ function MainFeature({ toast }) {
             exit={{ opacity: 0, y: 10 }}
             className="card p-6"
           >
-            <form onSubmit={(e) => {
+            {apiError && (
+              <div className="p-4 mb-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2 rounded-lg">
+                <AlertIcon className="h-5 w-5" />
+                <p>{apiError}</p>
+              </div>
+            )}
+            
+            {isLoading && (
+              <div className="flex justify-center items-center py-8">
+                <div className="flex flex-col items-center gap-2">
+                  <LoadingSpinner className="animate-spin h-8 w-8 text-primary" />
+                  <p className="text-surface-600 dark:text-surface-400">Loading invoice data...</p>
+                </div>
+              </div>
+            )}
+            {!isLoading && <form onSubmit={(e) => {
               e.preventDefault();
               saveInvoice();
             }}>
@@ -704,12 +994,22 @@ function MainFeature({ toast }) {
                 <button
                   type="submit"
                   className="btn-primary flex items-center gap-2"
+                  disabled={isSaving}
                 >
-                  <SaveIcon className="h-4 w-4" />
-                  <span>{isEditing ? 'Update Invoice' : 'Save Invoice'}</span>
+                  {isSaving ? (
+                    <>
+                      <LoadingSpinner className="animate-spin h-4 w-4" />
+                      <span>{isEditing ? 'Updating...' : 'Saving...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <SaveIcon className="h-4 w-4" />
+                      <span>{isEditing ? 'Update Invoice' : 'Save Invoice'}</span>
+                    </>
+                  )}
                 </button>
               </div>
-            </form>
+            </form>}
           </motion.div>
         </AnimatePresence>
       )}
@@ -723,6 +1023,18 @@ function MainFeature({ toast }) {
             exit={{ opacity: 0, y: 10 }}
             className="card print:shadow-none"
           >
+            {isLoading && (
+              <div className="flex justify-center items-center py-8">
+                <LoadingSpinner className="animate-spin h-8 w-8 text-primary" />
+              </div>
+            )}
+            
+            {apiError && (
+              <div className="p-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2">
+                <AlertIcon className="h-5 w-5" />
+                <p>{apiError}</p>
+              </div>
+            )}
             <div className="p-6 md:p-8">
               {/* Invoice Header */}
               <div className="flex flex-col md:flex-row md:justify-between md:items-start mb-8">
@@ -771,7 +1083,7 @@ function MainFeature({ toast }) {
                     {selectedInvoice.status === 'draft' && (
                       <button
                         onClick={() => {
-                          markAsSent(selectedInvoice.id);
+                          markAsSent(selectedInvoice.Id);
                           setSelectedInvoice({...selectedInvoice, status: 'sent'});
                         }}
                         className="btn bg-blue-500 text-white hover:bg-blue-600 flex items-center gap-1"
@@ -783,7 +1095,7 @@ function MainFeature({ toast }) {
                     {selectedInvoice.status === 'sent' && (
                       <button
                         onClick={() => {
-                          markAsPaid(selectedInvoice.id);
+                          markAsPaid(selectedInvoice.Id);
                           setSelectedInvoice({...selectedInvoice, status: 'paid'});
                         }}
                         className="btn bg-green-500 text-white hover:bg-green-600 flex items-center gap-1"
@@ -862,8 +1174,16 @@ function MainFeature({ toast }) {
                   </button>
                   <button
                     onClick={() => {
-                      if (confirm("Are you sure you want to delete this invoice?")) {
-                        deleteInvoice(selectedInvoice.id);
+                        deleteInvoice(selectedInvoice.Id);
+                      }
+                    }}
+                    className="btn bg-red-500 text-white hover:bg-red-600 flex items-center gap-2"
+                    disabled={isDeleting}
+                  >
+                    {isDeleting ? (
+                      <LoadingSpinner className="animate-spin h-4 w-4" />
+                    ) : (
+                      <TrashIcon className="h-4 w-4" />
                         setViewMode('list');
                       }
                     }}
