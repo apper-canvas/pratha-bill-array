@@ -143,6 +143,7 @@ function App() {
   return (
     <AuthContext.Provider value={authMethods}>
       <div className="min-h-screen">
+        <header className="flex justify-between items-center p-4 bg-white dark:bg-surface-800 shadow-sm">
           <div className="flex items-center gap-2">
             <div className="bg-primary rounded-lg p-2 text-white">
               <h1 className="text-xl font-bold">PB</h1>
