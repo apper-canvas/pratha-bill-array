@@ -91,6 +91,7 @@ function Home({ toast }) {
           <span>New Invoice</span>
         </button>
       </div>
+</div>
 
       {/* Stats Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -99,32 +100,31 @@ function Home({ toast }) {
             <div key={index} className="card p-5 animate-pulse h-24"></div>
           ))
         ) : (
-        {stats.map((stat, index) => {
-          const StatIcon = getIcon(stat.icon);
-          
-          return (
-            <motion.div 
-              key={index}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.1 }}
-              className="card p-5"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-surface-500 dark:text-surface-400 text-sm">{stat.title}</p>
-                  <h3 className={`text-2xl font-bold mt-1 ${stat.textColor}`}>{stat.value}</h3>
+          stats.map((stat, index) => {
+            const StatIcon = getIcon(stat.icon);
+            
+            return (
+              <motion.div 
+                key={index}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: index * 0.1 }}
+                className="card p-5"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-surface-500 dark:text-surface-400 text-sm">{stat.title}</p>
+                    <h3 className={`text-2xl font-bold mt-1 ${stat.textColor}`}>{stat.value}</h3>
+                  </div>
+                  <div className={`${stat.color} p-3 rounded-lg`}>
+                    <StatIcon className={`h-5 w-5 ${stat.textColor}`} />
+                  </div>
                 </div>
-                <div className={`${stat.color} p-3 rounded-lg`}>
-                  <StatIcon className={`h-5 w-5 ${stat.textColor}`} />
-                </div>
-              </div>
-            </motion.div>
-          );
-        })}
+              </motion.div>
+            );
+          })
         )}
       </div>
-
       {/* Tab Navigation */}
       <div className="border-b border-surface-200 dark:border-surface-700">
         <div className="flex overflow-x-auto scrollbar-hide gap-1 sm:gap-2">
