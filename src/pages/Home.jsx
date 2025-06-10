@@ -88,10 +88,9 @@ function Home({ toast }) {
             const PlusIcon = getIcon('Plus');
             return <PlusIcon className="h-4 w-4" />;
           })()}
-          <span>New Invoice</span>
+<span>New Invoice</span>
         </button>
       </div>
-</div>
 
       {/* Stats Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
