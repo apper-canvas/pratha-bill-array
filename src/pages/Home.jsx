@@ -39,7 +39,7 @@ function Home({ toast }) {
           .filter(inv => inv.status === 'paid')
           .reduce((sum, inv) => sum + (parseFloat(inv.total) || 0), 0);
           
-        // Count unique clients
+        // Count unique clients test
         const uniqueClients = [...new Set(invoices.map(inv => inv.clientEmail))].length;
         
         setDashboardStats({
