@@ -465,10 +465,10 @@ function MainFeature({ toast }) {
     } catch (error) {
       console.error(`Error updating invoice status for ID ${id}:`, error);
       toast.error("Failed to update invoice status");
-    
-    resetForm();
-    setViewMode('list');
-  };
+} catch (error) {
+      console.error(`Error updating invoice status for ID ${id}:`, error);
+      toast.error("Failed to update invoice status");
+    }
   };
 
   // Reset form
@@ -537,19 +537,19 @@ function MainFeature({ toast }) {
           {viewMode === 'create' && (isEditing ? 'Edit Invoice' : 'Create New Invoice')}
           {viewMode === 'detail' && 'Invoice Details'}
         </h2>
-        
+{viewMode === 'list' && (
+          <button
+            onClick={() => {
               initializeNewInvoice();
               setViewMode('create'); 
               setIsEditing(false);
-            onClick={() => {
-              resetForm();
-              setViewMode('create');
             }}
             className="btn-primary flex items-center gap-2"
           >
             <PlusIcon className="h-4 w-4" />
             <span>Create Invoice</span>
           </button>
+        )}
         )}
         
         {(viewMode === 'create' || viewMode === 'detail') && (
@@ -1172,8 +1172,9 @@ function MainFeature({ toast }) {
                     <FileEditIcon className="h-4 w-4" />
                     <span>Edit</span>
                   </button>
-                  <button
+<button
                     onClick={() => {
+                      if (confirm("Are you sure you want to delete this invoice?")) {
                         deleteInvoice(selectedInvoice.Id);
                       }
                     }}
@@ -1184,12 +1185,7 @@ function MainFeature({ toast }) {
                       <LoadingSpinner className="animate-spin h-4 w-4" />
                     ) : (
                       <TrashIcon className="h-4 w-4" />
-                        setViewMode('list');
-                      }
-                    }}
-                    className="btn bg-red-500 text-white hover:bg-red-600 flex items-center gap-2"
-                  >
-                    <TrashIcon className="h-4 w-4" />
+                    )}
                     <span>Delete</span>
                   </button>
                 </div>
